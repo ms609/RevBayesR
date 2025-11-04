@@ -41,7 +41,7 @@
 #' @importFrom processx process
 #' @export
 rbSession <- function(args = character(), rb_path = Sys.getenv("rb.exe"),
-                       timeout = if (length(args) > 0) 2 else 0.5) {
+                      timeout = if (length(args) > 0) 2 else 0.5) {
   if (!nzchar(rb_path)) {
     stop("Path to RevBayes executable not specified")
   }
@@ -64,9 +64,9 @@ rbSession <- function(args = character(), rb_path = Sys.getenv("rb.exe"),
     warnPrefix <- c("Missing Variable")
 
     .starts_with <- function(prefix) {
-      start <- paste0("   ", prefix, ":\t")
+      start <- paste0(prefix, ":\t")
       for (pref in start) {
-        if (startsWith(line, pref)) return(TRUE)
+        if (startsWith(gsub("^[>\\s]+", "", line, perl = TRUE), pref)) return(TRUE)
       }
       FALSE
     }
@@ -134,7 +134,7 @@ rbSession <- function(args = character(), rb_path = Sys.getenv("rb.exe"),
     }
   }
 
-  is_alive <- function() {
+  isAlive <- function() {
     p$is_alive()
   }
   send <- function(cmd, wait = 0.1, echo = TRUE, timeout = 2) {
@@ -158,7 +158,7 @@ rbSession <- function(args = character(), rb_path = Sys.getenv("rb.exe"),
   # Return:
   structure(
     list(
-      active = is_alive,
+      active = isAlive,
       do = send,
       flush = flush,
       history = getHistory,
@@ -169,6 +169,7 @@ rbSession <- function(args = character(), rb_path = Sys.getenv("rb.exe"),
       quit = stopSession
     ),
     started = Sys.time(),
+    args = args,
     class = "rbSession"
   )
 
@@ -187,5 +188,9 @@ print.rbSession <- function(x, ...) {
 #' @export
 summary.rbSession <- function(x, ...) {
   cat_line(print(rb))
-  cat_line(col_grey("Start: "), format(attr(x, "started"), "%Y-%m-%d %H:%M:%S"))
+  cat_line(col_grey("Started: "), format(attr(x, "started"), "%Y-%m-%d %H:%M:%S"))
+  args <- attr(x, "args")
+  if (nzchar(args)) {
+    cat_line(col_grey("Arguments: "), args)
+  }
 }
