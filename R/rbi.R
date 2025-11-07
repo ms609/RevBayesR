@@ -49,7 +49,9 @@ rbSession <- function(args = character(), rb_path = Sys.getenv("rb.exe"),
     stop(rb_path, " does not exist; check `rb_path`")
   }
 
-  p <- process$new(
+  rb <- new.env(parent = emptyenv())
+
+  rb$p <- process$new(
     command = rb_path,
     args = args,
     stdin = "|",
@@ -85,9 +87,21 @@ rbSession <- function(args = character(), rb_path = Sys.getenv("rb.exe"),
     buffer <- character()
     start <- Sys.time()
     last_new <- start
+    poll_ms <- 80
     repeat {
+      rb$p$poll_io(poll_ms)
       # try to read any new lines
-      new <- p$read_output_lines()
+      new <- tryCatch(rb$p$read_output_lines(), error = function(e) {
+        msg <- e$parent$message
+        nullMsg <- "embedded nul in string: "
+        if (startsWith(msg, nullMsg)) {
+          gsub("\\\\0", " ", substr(msg, nchar(nullMsg), nchar(msg)))
+        } else {
+          cat_line(col_red(msg))
+          character()
+        }
+      })
+
       if (length(new)) {
         buffer <- c(buffer, new)
         if (any(nzchar(new))) {
@@ -97,10 +111,16 @@ rbSession <- function(args = character(), rb_path = Sys.getenv("rb.exe"),
           }
         }
       } else {
-        if (as.numeric(difftime(Sys.time(), last_new, units = "secs")) > stable_wait) break
+        # No new bytes this loop
+        if (as.numeric(difftime(Sys.time(), last_new, units = "secs")) > stable_wait) {
+          break
+        }
       }
-      if (as.numeric(difftime(Sys.time(), start, units = "secs")) > timeout) break
-      Sys.sleep(0.05)
+
+      # Timeout guard
+      if (as.numeric(difftime(Sys.time(), start, units = "secs")) > timeout) {
+        break
+      }
     }
     assign(".history", c(.history, buffer), envir = parent.env(environment()))
     paste(buffer, collapse = "\n")
@@ -124,10 +144,14 @@ rbSession <- function(args = character(), rb_path = Sys.getenv("rb.exe"),
   }
 
   interact <- function(wait = 0.1, echo = TRUE, timeout = 2) {
-    while(p$is_alive() && nzchar(cmd <- readline("rb> "))) {
+    if (!isAlive()) {
+      message("Starting new RevBayes session")
+      restartSession()
+    }
+    while(isAlive() && nzchar(cmd <- readline("rb> "))) {
       send(cmd, wait = wait, echo = echo, timeout = timeout)
     }
-    if (p$is_alive()) {
+    if (isAlive()) {
       cat_line(col_green(
         "Left interactive mode; RevBayes session continues in background")
         )
@@ -135,11 +159,12 @@ rbSession <- function(args = character(), rb_path = Sys.getenv("rb.exe"),
   }
 
   isAlive <- function() {
-    p$is_alive()
+    rb$p$is_alive()
   }
+
   send <- function(cmd, wait = 0.1, echo = TRUE, timeout = 2) {
-    if (!p$is_alive()) stop("RevBayes not running")
-    p$write_input(paste0(cmd, "\n"))
+    if (!isAlive()) stop("RevBayes not running")
+    rb$p$write_input(paste0(cmd, "\n"))
 
     assign(".history", .history <- c(.history, paste0("rb> ", cmd)),
            envir = parent.env(environment()))
@@ -149,8 +174,18 @@ rbSession <- function(args = character(), rb_path = Sys.getenv("rb.exe"),
   }
 
   stopSession <- function() {
-    if (p$is_alive()) p$kill()
+    if (!isAlive()) rb$p$kill()
     invisible(TRUE)
+  }
+
+  restartSession <- function() {
+    rb$p <- process$new(
+      command = rb_path,
+      args = args,
+      stdin = "|",
+      stdout = "|",
+      stderr = "2>&1"
+    )
   }
 
   banner <- .echo_until_prompt(stable_wait = timeout)
@@ -165,7 +200,7 @@ rbSession <- function(args = character(), rb_path = Sys.getenv("rb.exe"),
       input = getInput,
       interactive = interact,
       output = getOutput,
-      process = p,
+      process = rb$p,
       quit = stopSession
     ),
     started = Sys.time(),
